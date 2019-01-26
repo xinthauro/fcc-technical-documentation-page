@@ -1,0 +1,137 @@
+@import url('https://fonts.googleapis.com/css?family=Open+Sans|Proza+Libre|Ubuntu+Mono');
+
+:root {
+    --color-background: #f9f9f9;
+    --color-font-heading: #9d8f8f;
+    --color-font-body: #625757;
+    --color-hover: #2980b9;
+    --color-light: #f9f9f9;
+    --color-dark: #625757;
+    --font-heading: 'Proza Libre', sans-serif;
+    --font-body: 'Open Sans', sans-serif;
+    --font-code: 'Ubuntu Mono', monospace;
+    --navbar-width: 30%;
+}
+
+html,
+body {
+    box-sizing: content-box;
+    margin: 0;
+    padding: 0;
+    color: var(--color-font-body);
+    background-color: var(--color-background);
+    font-family: var(--font-body);
+    line-height: 1.35;
+}
+
+header,
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+    color: var(--color-font-heading);
+    font-family: var(--font-heading);
+}
+
+/*** NavBar ***/
+.nav-doc {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: var(--navbar-width);
+    overflow-x: hidden;
+    overflow-y: auto;
+}
+
+.nav-header {
+    padding: 3rem 2rem 1rem;
+    color: var(--color-light);
+    background-color: var(--color-font-heading);
+    font-size: 1.4rem;
+    font-weight: 900;
+}
+
+.nav-link {
+    display: block;
+    padding: .5rem 2rem;
+    border-top: 2px solid var(--color-font-heading);
+    color: var(--font-heading);
+    text-decoration: none;
+    font-weight: 600;
+}
+
+.nav-link:hover {
+    color: var(--color-light);
+    background-color: var(--color-font-heading);
+}
+
+/*** Document ***/
+.main-doc {
+    margin-left: var(--navbar-width);
+    padding: 1rem 0rem;
+}
+
+.main-section {
+    padding: 2rem 3rem 0rem 3rem;
+}
+
+.main-section header {
+    font-size: 1.4rem;
+    font-weight: 900;
+}
+
+.main-section h2 {
+    padding: 1rem 0rem 0rem 0rem;
+    font-size: 1.2rem;
+    font-weight: 700;
+}
+
+.main-section p {
+    text-justify: inter-word;
+}
+.main-link {
+    color: var(--color-font-body);
+    font-weight: 600;
+    text-decoration: none;
+}
+
+.main-link:hover {
+    color: var(--color-hover);
+}
+
+.language-c {
+    display: block;
+    position: relative;
+    margin: auto 2rem;
+    padding: 0;
+    font-family: var(--font-code);
+    font-size: .8rem;
+    text-align: left;
+    white-space: pre;
+    word-break: normal;
+    word-wrap: normal;
+}
+
+@media (max-width: 800px) {
+    .nav-doc {
+        position: static;
+        width: 100%;
+    }
+
+    .main-doc {
+        position: static;
+        margin-left: 0;
+        width: 100%;
+    }
+
+    .main-section {
+        padding: 2rem;
+    }
+
+    .main-section pre {
+        margin: 0;
+        font-size: .7rem;
+    }
+}

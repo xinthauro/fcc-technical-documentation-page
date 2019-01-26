@@ -1,0 +1,846 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- Style -->
+    <link rel="stylesheet" href="/css/style.css">
+    <title>Technical Documental Page</title>
+</head>
+<body>
+    <!-- Navbar -->
+    <nav class="nav-doc" id="navbar">
+        <header class="nav-header">Effective C Tips</header>
+        <a href="#Introduction" class="nav-link">Introduction</a>
+        <a href="#Using_vsprintf" class="nav-link">Using vsprintf</a>
+        <a href="#Defining_buffer_sizes" class="nav-link">Defining buffer sizes</a>
+        <a href="#Exiting_an_intentional_trap" class="nav-link">Exiting an intentional trap</a>
+        <a href="#Prototyping_static_functions" class="nav-link">Prototyping static functions</a>
+        <a href="#Use_pre-masking_rather_than_post-masking" class="nav-link">Use pre-masking rather than post-masking</a>
+        <a href="#Creating_a_flags_variable" class="nav-link">Creating a flags variable</a>
+        <a href="#Use_strongly_typed_function_parameters" class="nav-link">Use strongly typed function parameters</a>
+        <a href="#Structure_comparison" class="nav-link">Structure Comparison</a>
+        <a href="#Use_warning" class="nav-link">Use warning</a>
+        <a href="#Reference" class="nav-link">Reference</a>
+    </nav>
+    <!-- Document -->
+    <main class="main-doc" id="main-doc">
+        <!-- Introduction -->
+        <section class="main-section" id="Introduction">
+            <header>Introduction</header>
+            <p>I’ve been running a series of tips on Efficient C for a while now. I thought I’d broaden the scope
+                by also offering a series of tips on what I call Effective C. These will be tips that while not
+                necessarily allowing you to write tighter code, will allow you to write better code. This series of
+                tips is based on the development for embedded systems.</p>
+        </section>
+        <!-- Using vsprintf() -->
+        <section class="main-section" id="Using_vsprintf">
+            <header>Using vsprintf</header>
+            <p>I’m kicking the series off on the rarely used standard library function, vsprintf(). First, some
+                preamble…</p>
+            <p>One of the perverse things I tend to do is look through the C standard library and examine functions
+                that on the face of it seem, well, useless. I do this because I think the folks that worked on this
+                stuff were in general very smart and thus had a very good reason for including some of these
+                ‘weird’ functions. One of these is the function ‘vsprintf’. If you go and look up the definition of
+                this function, e.g. here , then you’ll find a rather brain ache inducing description. Now back when
+                I was a lad I’d look at descriptions such as this and simply shrug and walk away. However, about
+                ten years ago I started to make a concerted effort to see if a function such as vsprintf has a real
+                benefit in embedded systems. Here’s what I discovered in this case:</p>
+            <p>If you are working on a product that contains a VFD or LCD, then you will almost certainly have code
+                that contains a function for writing a string to the display at a specified position. For example:</p>
+<code class="language-c">
+static void display_write(uint8_t row, uint8_t col, char const *buf)
+{
+    /* send formatted string to display - hardware dependent */
+}
+</code>
+            <p>Then you will also have a plethora of functions that essentially do the same thing. That is accept
+                some data, allocate a buffer on the stack, use sprintf to write formatted data into the buffer, and
+                then call the function that actually writes the buffer to the display at the required position.
+                Here’s some examples:</p>
+<code class="language-c">
+void display_temperature(float ambient_temperature)
+{
+    char buf[10];
+    
+    sprintf(buf,"%5.2f", ambient_temperature);
+    display_write(6, 8, buf);
+}
+
+void display_time(int hours, int minutes, int seconds)
+{
+    char buf[12];
+    
+    sprintf(buf,"%02d:%02d:%02d", hours, minutes, seconds);
+    display_write(3, 9, buf);
+}
+</code>
+            <p>There’s nothing really wrong with this approach. However, there is a better way, courtesy of
+                vsprintf().</p>
+            <p>What one does is to modify display_write() to take a variable length argument list. Then within
+                display_write() use vsprintf() to process the variable length argument list and to generate the
+                requisite string. The basic structure for the function is as follows:</p>
+<code class="language-c">
+void display_write(uint8_t row, uint8_t column, char const *format, ...)
+{
+    va_list  args;
+    char  buf[MAX_STR_LEN];
+    
+    va_start(args, format);
+    vsprintf(buf, format, args);    /* buf contains the formatted string */
+    
+    /* send formatted string to display - hardware dependent */
+    
+    va_end(args);                   /* clean up, do NOT omit */
+}
+</code>
+            <p>My objective here is not to explain how to use variadic arguments or indeed how vsprintf() works,
+                there are dozens of places on the web that will do that. Instead I’m interested in showing you the
+                benefit of this approach. The display_write() function has evidently become more complex; however
+                the functions that call display_write have become dramatically simplified, as they are now just:</p>
+<code class="language-c">
+void display_temperature(float ambient_temperature)
+{
+    display_write(6, 8, "%5.2f", ambient_temperature);
+}
+
+void display_time(int hours, int minutes, int seconds)
+{
+    display_write(3, 9, "%02d:%02d:%02d", hours, minutes, seconds);
+}
+</code>
+            <p>Is this more Effective code? I think so, for the following reasons.</p>
+            <ul>
+                <li>The higher level functions are now much cleaner and easier to follow.</li>
+                <li>All the heavy lifting is localized in one place, which typically dramatically reduces the
+                    probability of errors.</li>
+            </ul>
+            <p>Finally, you’ll typically end up with a nice reduction in code size (even though this wasn’t my
+                objective). All in all, not bad for one obscure function.</p>
+        </section>
+
+        <!-- Defining buffer sizes -->
+        <section class="main-section" id="Defining_buffer_sizes">
+            <header>Defining buffer sizes</header>
+            <p>This tip is about addressing something that just about every embedded system has – a buffer whose
+                length is a power of two.</p>
+            <p>In order to make many buffer operations more efficient, it is common practice to make the buffer
+                size a power of two so that simple masking operations may be performed on them, rather than
+                explicit length checks. This is particularly true of communications buffers where data are received
+                under interrupt. As a result, it is common to see code that looks something like this:</p>
+<code class="language-c">
+#define RX_BUF_SIZE (32)
+static uint8_t rx_buf[RX_BUF_SIZE]; /* Receive buffer */
+
+__interrupt void RX_interrupt(void)
+{
+    /* offset into rx_buf[] where next character should be written */
+    static uint8_t rx_head = 0; 
+    uint8_t rx_char;
+    
+    rx_char = HW_REG;           /* get the received character */
+    
+    rx_head &= RX_BUF_SIZE - 1; /* mask the offset into the buffer */
+    rx_buf[rx_head] = rx_char;  /* store the received char */
+    ++rx_head;                  /* increment offset */
+}
+</code>
+            <p>The first thing I do to make this code more flexible, is to allow the size of the buffer to be
+                overridden on the command line. Thus my declaration for the buffer size now looks like this:</p>
+<code class="language-c">
+#ifndef RX_BUF_SIZE
+    #define RX_BUF_SIZE (32)
+#endif
+</code>
+            <p>This is a useful extension because it allows me to control the resources used by the code without
+                having to edit the code per se. However, this flexibility comes at a cost. What happens if someone
+                was to inadvertently pass a non power of 2 buffer size on the command line? Well as it stands –
+                disaster. However, the fix is quite easy.</p>
+<code class="language-c">
+#ifndef RX_BUF_SIZE
+    #define RX_BUF_SIZE (32)
+#endif
+#define RX_BUF_MASK (RX_BUF_SIZE - 1)
+#if (RX_BUF_SIZE & RX_BUF_MASK)
+    #error "RX buffer size is not a power of 2"
+#endif
+</code>
+            <p>What I’ve done is define another manifest constant, RX_BUF_MASK to be equal to one less than
+                the buffer size. I then test using a bit-wise AND of the two manifest constants. If the result is
+                non zero, then evidently the buffer size is not a power of two and compilation is halted by use of
+                the #error statement. If you aren’t familiar with the #error statement, you’ll find this article I
+                wrote a few years back to be helpful.</p>
+            <p>Although this is evidently a big improvement, it still isn’t quite good enough. To see, why,
+                consider what happens if RX_BUF_SIZE is zero. Zero is of course a power of two, and so will
+                pass the check. Now most C90 compliant compilers will complain about declaring an array with zero
+                length. However this is legal in C99 compilers in general and GNU compilers in particular. Thus, we
+                also need to protect against this case. Furthermore as Yevheniy was kind enough to point out in the
+                comments, we also have to protect against a buffer size of 1 (as 1 & 0 = 0). So we now get:</p>
+<code class="language-c">
+#ifndef RX_BUF_SIZE
+    #define RX_BUF_SIZE (32)
+#endif
+#if (RX_BUF_SIZE < 2)
+    #error "RX buffer must be a minimum length of 2"
+#endif
+#define RX_BUF_MASK (RX_BUF_SIZE - 1)
+#if (RX_BUF_SIZE & RX_BUF_MASK)
+    #error "RX buffer size is not a power of 2"
+#endif
+</code>
+            <p>As a final comment, note that the definition of RX_BUF_MASK has an additional benefit in that
+                it can be used in the mask operation in place of (RX_BUF_SIZE – 1), so that my interrupt
+                handler now becomes:</p>
+<code class="language-c">
+__interrupt void RX_interrupt(void)
+{
+    /* offset into rx_buf[] where next character should be written */
+    static uint8_t rx_head = 0;
+    uint8_t rx_char;
+
+    rx_char = HW_REG;           /* get the received character */
+
+    rx_head &= RX_BUF_MASK;     /* mask the offset into the buffer */
+    rx_buf[rx_head] = rx_char;  /* store the received char */
+    ++rx_head;                  /* increment offset */
+}
+</code>
+            <p>So is this effective C? I think so. It’s efficient, it’s flexible and its robustly protected against
+                the sorts of bone headed mistakes that we all make from time to time.</p>
+        </section>
+        <!-- Exiting an intentional trap -->
+        <section class="main-section" id="Exiting_an_intentional_trap">
+            <header class="main-header">Exiting an intentional trap</header>
+                <p>In this tip I’d like to give you a useful hint concerning traps. What exactly do I mean by a
+                    trap?
+                    Well while C++ has a ‘built in’ exception handler (try searching for ‘catch’ or ‘throw’), C
+                    does
+                    not (thanks to Uhmmmm for pointing this out). Instead, what I like to do when debugging code is
+                    to
+                    simply spin in an infinite loop when something unexpected happens. For example consider this
+                    code
+                    fragment:</p>
+<code class="language-c">
+switch (foo) {
+    case 0:
+        ...
+    break;
+    case 1:
+        ...
+    break;
+        ...
+    default:
+        trap();
+    break;
+}
+</code>
+                <p>My expectation is that the default case should never be taken. If it is, then I simply call the
+                    routine trap(). So what does trap() look like? Well the naive implementation looks something
+                    like
+                    this:</p>
+<code class="language-c">
+void trap(void)
+{
+    for (;;) {
+    }
+}
+</code>
+                <p>The idea is that when the system stops responding, stopping the debugger will show that
+                    something
+                    unexpected happened. However, while this mostly works, it has a number of significant
+                    shortcomings.
+                    The most important is that leaving code like this in a production release is definitely not a
+                    good
+                    idea, and so the first modification that needs to be made is to arrange to remove the infinite
+                    loop
+                    for a release build. This is usually done by defining NDEBUG. The code thus becomes:</p>
+<code class="language-c">
+void trap(void)
+{
+    #ifndef NDEBUG
+        for (;;) {
+        }
+    #endif
+}
+</code>
+                <p>The next problem with this trap function is that it would be ineffective in a system that
+                    executes
+                    most of its code under interrupt. As a result, it makes sense to disable interrupts when
+                    entering
+                    the trap. This is of course compiler / platform specific. However it will typically look
+                    something
+                    like this:</p>
+<code class="language-c">
+void trap(void)
+{
+    #ifndef NDEBUG
+        __disable_interrupts();
+        for (;;) {
+        }
+    #endif
+}
+</code>
+                <p>The final major problem with this code is that it’s hard to tell what caused the trap. While you
+                    can
+                    of course examine the call stack and work backwards, it’s far easier if you instead do
+                    something
+                    like this:</p>
+<code class="language-c">
+static volatile bool exit_trap = false;
+
+void trap(void)
+{
+    #ifndef NDEBUG
+        __disable_interrupts();
+        while (!exit_trap) {
+        }
+    #endif
+}
+</code>
+                <p>What I’ve done is declare a volatile variable called exit<em>trap and have initialized it to
+                        false.
+                        Thus when the trap occurs, the code spins in an infinite loop. However by setting Exit</em>Trap
+                    to true, I will cause the loop to be exited and I can then step the debugger and find out where
+                    the
+                    problem occurred.</p>
+                <p>Regular readers will perhaps have noticed that this isn’t the first time I’ve used volatile to
+                    achieve a useful result.</p>
+                <p>Incidentally I’m sure that many of you trap errors via the use of the assert macro. I do too –
+                    and I
+                    plan to write about how I do this at some point.</p>
+                <p>So does this meet the criteria for an effective C tip? I think so. It’s a very effective aid in
+                    debugging embedded systems. It’s highly portable and it’s easy to understand. That’s not a bad
+                    combination!</p>
+        </section>
+        <!-- Prototyping static functions -->
+        <section class="main-section" id="Prototyping_static_functions">
+            <header class="main-header">Prototyping static functions</header>
+            <p>I have previously talked about the benefits of static functions. Now I’m addressing where to place
+                static functions in a module. This posting is motivated by the fact that I’ve recently spent a
+                considerable amount of time wading through code that locates its static functions at the top of the
+                file. That is the code looks like this:</p>
+<code class="language-c">
+static void fna(void) {...}
+
+static void fnb(uint16_t a) {...}
+
+...
+
+static uint16_t fnc(void) {...}
+
+void fn_public(void)
+{
+    uint16_t t;
+
+    fna();
+    t = fnc();
+    fnb(t);
+    ...
+}
+</code>
+            <p>In this approach (which unfortunately seems to be the more common), all of the static functions are
+                defined at the top of the module, and the public functions appear at the bottom. I’ve always
+                strongly disliked this approach because it forces someone that is browsing the code to wade through
+                all the minutiae of the implementation before they get to the big picture public functions. This
+                can be very tedious in a file with a large number of static functions. The problem is compounded by
+                the fact that it’s very difficult to search for a non static function. Yes I’m sure I could put
+                together a regular expression search to do it – but it requires what I consider to be unnecessary
+                work.</p>
+            <p>A far better approach is as follows. Prototype (declare) all the static functions at the top of the
+                module. Then follow the prototypes with the public functions (thus making them very easy to locate)
+                and then place the static functions out of the way at the end of the file. If I do this, my code
+                example now looks like this:</p>
+<code class="language-c">
+static void fna(void);
+static void fnb(uint16_t a);
+static uint16_t fnc(void);
+
+void fn_public(void)
+{
+    uint16_t t;
+
+    fna();
+    t = fnc();
+    fnb(t);
+    ...
+}
+
+static void fna(void) {...}
+
+static void fnb(uint16_t a) {...}
+
+...
+
+static uint16_t fnc(void) {...}
+</code>
+            <p>If you subscribe to the belief that we only write source code so that someone else can read it then
+                this simple change to your coding style can have immense benefits to the person that has to
+                maintain your code (including a future version of yourself).</p>
+        </section>
+        <!-- Use pre-masking rather than post-masking -->
+        <section class="main-section" id="Use_pre-masking_rather_than_post-masking">
+            <header class="main-header">Use pre-masking rather than post-masking</header>
+            <p>In this tip I’d like to offer a simple hint that can potentially make your buffer manipulation code
+                a little more robust at essentially zero cost. I’d actually demonstrated the technique in this
+                posting, but had not really emphasized its value.</p>
+            <p>Consider, for example, a receive buffer on a communications channel. The data are received a
+                character at a time under interrupt and so the receive ISR needs to know where to place the next
+                character. The question arises as to how best to do this? Now for performance reasons I usually
+                make my buffer size a power of 2 such that I can use a simple mask operation. I then use an offset
+                into the buffer to dictate where the next byte should be written. Code to do this typically looks
+                something like this:</p>
+<code class="language-c">
+#define RX_BUF_SIZE (32)
+#define RX_BUF_MASK  (RX_BUF_SIZE - 1)
+/* receive buffer */
+static uint8_t rx_buf[RX_BUF_SIZE];
+/* offset into rx_buf[] where next character should be written */
+static uint8_t rx_head = 0;
+
+__interrupt void RX_interrupt(void)
+{
+    uint8_t rx_char;
+
+    rx_char = HW_REG;           /* get the received character */
+    rx_buf[rx_head] = rx_char;  /* store the received char */
+    ++rx_head;                  /* increment offset */
+    rx_head &= RX_BUF_MASK;     /* mask the offset into the buffer */
+}
+</code>
+            <p>In the last couple of lines, I increment the value of RxHead and then mask it, with the intention of
+                ensuring that the next write into rx_buf[] will be in the requisite range. The operative word here
+                is ‘intention’. To see what I mean, consider what would happen if RxHead gets corrupted in some
+                way. Now if the corruption is caused by RFI or some other such phenomenon then you are probably out
+                of luck. However, what if RxHead gets unintentionally manipulated by a bug elsewhere in your code?
+                As written, the manipulation may cause a write to occur beyond the end of the buffer – with all the
+                attendant chaos that would inevitably arise. You can prevent this by simply doing the masking
+                before indexing into the array. That is the code looks like this:</p>
+<code class="C language-c">
+__interrupt void RX_interrupt(void)
+{
+    uint8_t rx_char;
+
+    rx_char = HW_REG;           /* get the received character */
+    rx_head &= RX_BUF_MASK;     /* mask the offset into the buffer */
+    rx_buf[rx_head] = rx_char;  /* store the received char */
+    ++rx_head;                  /* increment offset */
+}
+</code>
+            <p>What has this bought you? Well by coding it this way you guarantee that you will not index beyond
+                the end of the array regardless of the value of RxHead when the ISR is invoked. Furthermore the
+                guarantee comes at zero performance cost. Of course this hasn’t solved your problem with some other
+                piece of code stomping on RxHead. However it does make finding the problem a lot easier because
+                your problem will now be highly localized (i.e. data are received out of order) versus the system
+                crashes randomly. The former class of problem is considerably easier to locate than is the latter.</p>
+            <p>So is this effective ‘C’. I think so. It’s a simple technique that adds a little robustness for
+                free. I wouldn’t mind finding a few more like it.</p>
+        </section>
+        <!-- Creating a flags variable -->
+        <section class="main-section" id="Creating_a_flags_variable">
+            <header class="main-header">Creating a flags variable</header>
+            <p>Now I’m going to address the topic of creating what I call a flags variable. A flags variable is
+                nothing more than an integral type that I wish to treat as an array of bits, where each bit
+                represents a flag or boolean value. I find these particularly valuable in three situations:</p>
+            <p>When the CPU has part of its address space that is much faster to access than other regions.
+                Examples are the zero page on 6805 type processors, and the lower 256 bytes of RAM on AVR
+                processors. Depending upon your compiler, you may also want to do this with the bit addressable RAM
+                region of the 8051.
+                When I’m running short on RAM and thus assigning an entire byte or integer to store a single
+                boolean flag is waste I can’t afford.
+                When I have a number of related flags where it just makes sense to group them together.
+                The basic approach is to use bitfields. Now I’m not a huge fan of bitfields – particularly when
+                someone tries to use them to map onto hardware registers. However, for this application they work
+                very well. As usual however, the devil is in the details. To show you what I mean, I’ll first show
+                you a typical implementation of mine, and then explain what I’m doing and why.</p>
+<code class="language-c">
+typedef union {
+    /* allows us to refer to the flags 'en masse' */
+    uint8_t all_flags;
+    st  
+        uint8_t foo: 1,     /* explanation of foo */
+        uint8_t bar: 1,     /* explanation of bar */
+        uint8_t spare5: 1,  /* unused */
+        uint8_t spare4: 1,  /* unused */
+        uint8_t spare3: 1,  /* unused */
+        uint8_t spare2: 1,  /* unused */
+        uint8_t spare1: 1,  /* unused */
+        uint8_t spare0: 1;  /* unused */
+    };
+} flags_t;
+
+static flags_t flags;       /* allocation for the Flags */
+
+flags.all_flags = 0u;       /* clear all flags */
+
+...
+
+flags.bar = 1u;             /* set the bar flag */
+</code>
+            <p>There are several things to note here.</p>
+            <h2>Use of a union</h2>
+            <p>The first thing to note is that I have used a union of an integral type (uint8_t) and a structure of
+                bitfields. This allows me to access all the flags ‘en masse’. This is particularly useful for
+                clearing all the flags as shown in the example code. Note that our friends at MISRA disallow
+                unions. However, in my opinion, this is a decent example of where they make for better code –
+                except see the caveat below.</p>
+            <h2>Use of integral type</h2>
+            <p>Standard C requires that only types int and unsigned int may be used for the base type of an integer
+                bitfield. However, many embedded systems compilers remove this restriction and allow you to use any
+                integral type as the base type for a bitfield. This is particularly valuable on 8-bit processors.
+                In this case I have taken advantage of the language extension to use a uint8_t type.</p>
+            <h2>Use of an anonymous structure</h2>
+            <p>You will note that the bitfield structure is unnamed, and as such is an anonymous structure.
+                Anonymous structures are part of C++ – but not standard C. However, many C compilers support this
+                construct and so I use it as I feel it makes the underlying code a lot easier to read.</p>
+            <h2>Naming of unused flags</h2>
+            <p>If you look at the way I have named the unused flags, it looks a little odd. That is the first
+                unused flag is spare5, the next spare4 and so on down to spare0. Now I rarely do things on a whim,
+                and indeed this is a good example. So why do I do it this way? Well, there are two reasons:</p>
+            <ol>
+                <li>When I first create the structure, I label all the flags, starting from spare7 down to
+                    spare0. This inherently ensures that I name precisely the correct number of flags in the
+                    structure. To see why this is useful, take the above code and allocate an extra flag in the
+                    bitfield structure. Then compile and see if you get a compilation error or warning. Whether
+                    you will or not depends upon whether your compiler allows bitfields to cross the storage
+                    unit boundary. If it does, then your compiler will allocate two bytes, and the all_flags
+                    member of the union will not cover all of the flags. This can come as a nasty surprise (and
+                    perhaps explains why MISRA is wary of unions). You can prevent this from happening by
+                    naming the flags as shown.</li>
+
+                <li>When it becomes necessary to allocate a new flag, I simply replace the topmost unused flag
+                    (in this example that would be spare5) with its new name, e.g. zap. The remainder of the
+                    structure is unchanged. If instead I had named the topmost unused flag ‘spare0’, the next
+                    ‘spare1’ and so on, then the code would give a completely misleading picture of how many
+                    spare bits are left for future use after I had taken one of the unused flags.</li>
+            </ol>
+            <p>If you look at what I have done here, it’s interesting to note that I have relied upon two
+                extensions to standard C (which violates the MISRA requirement for no use of compiler extensions)
+                and I have also violated a third MISRA tenet via the use of a union. I would not be surprised if
+                I’ve also violated a few other rules as well. Now I don’t do these things lightly, and so I only
+                use this construct when I see real benefit in doing so. I’ll leave it for another day to discuss my
+                overall philosophy regarding adherence to the MISRA guidelines. It is of course up to you the
+                reader to make the determination as to whether this is indeed effective C.</p>
+        </section>
+        <!-- Use strongly typed function parameters -->
+        <section class="main-section" id="Use_strongly_typed_function_parameters">
+            <header class="main-header">Use strongly typed function parameters</header>
+            <p>This topic concerns function parameters, and more to the point, how you should choose them in order
+                to make your code considerably more resilient to parameter passing errors. What do I mean by
+                parameter passing errors? Well consider a function that is intended to draw a rectangle on a
+                display. The lousy way to design this function interface would be something like this:</p>
+<code class="language-c">
+void draw_rect(int x1, int y1, int x2, int y2, int color, int fill)
+{
+    ...
+}
+</code>
+            <p>I must have seen a function like this many times. So what’s wrong with this you ask? Well in
+                computer jargon the parameters are too weakly typed. To put it into plain English, it’s way too
+                easy to pass a Y ordinate when you are supposed to pass an X ordinate, or indeed to pass a color
+                when you are supposed to be passing an ordinate or a fill pattern. Although in this case (and
+                indeed in most cases) these types of mistakes are clearly discernible at run time, I’m a firm
+                believer in catching as many problems at compile time as possible. So how do I do this? Well there
+                are various things one can do. The most powerful technique is to use considerably more meaningful
+                data types. In this case, I’d do something like this:</p>
+<code class="language-c">
+typedef struct {
+    int x;
+    int y;
+} coordinate_t;
+
+typedef enum {
+    RED, BLACK, GREEN, PURPLE ... YELLOW
+} color_t;
+
+typedef enum {
+    SOLID, DOTTED, DASHED .. MORSE
+} fill_pattern_t;
+
+void draw_rect(coordinate_t, coordinate_t, color_t color, fill_pattern_t fill)
+{
+    ...
+}
+</code>
+            <p>Now clearly it’s highly likely that your compiler will complain if you attempt to pass a coordinate
+                to a color and so on – and thus this is a definite improvement. However, nothing I’ve done here
+                will prevent the X & Y ordinates being interchanged. Unfortunately, most of the time you are
+                out of luck on this one – except in the case where you are dealing with certain sizes of display
+                panels with resolutions such as 320 * 64, 320 * 128 and so on. In these cases, the X ordinate must
+                be represented by a uint16_t whereas the Y ordinate may be represented by a uint8_t. In
+                which case my coordinate_t data type becomes:</p>
+<code class="language-c">
+typedef struct {
+    uint16_t x;
+    uint8_t y;
+} coordinate_t;
+</code>
+            <p>This will at least cut down on the incidence of parameters being passed incorrectly.</p>
+            <p>Although you probably will not get much help from the compiler, you can also often get a degree of
+                protection by declaring appropriate parameters as const. A good example of this is the standard C
+                function memcpy(). If like me, you find yourself wondering if it’s memcpy(to, from) or memcpy(from,
+                to), then an examination of the function prototype tells you all you need to know:</p>
+<code class="language-c">
+void *memcpy(void *s1, const void *s2, size_t n);
+</code>
+            <p>That is, the first parameter is simply declared as a void *pointer, whereas the second parameter is
+                declared as void *pointer to const. In short the second parameter points to what we are reading
+                from, and hence memcpy is indeed memcpy(to, from). Now I’m sure that many of you are thinking to
+                yourself – so what, the real solution to this is to give meaningful names to the function
+                prototype. For example:</p>
+<code class="language-c">
+void *memcpy(void *destination, const void *source, size_t n_bytes);
+</code>
+            <p>Although I agree wholeheartedly with this sentiment, I’ll make two observations:</p>
+            <ol>
+                <li>You are assuming that the person reading your code is sufficiently fluent in the language
+                    (English in this case) that the names are meaningful to them.</li>
+                <li>Your idea of a meaningful label may not be shared by others. I’ve noticed that this is
+                    particularly the case with software, as it seems that all too often the ability to write
+                    code and the ability to put a meaningful sentence together are inversely correlated.</li>
+            </ol>
+            <p>The final technique that I employ concerns psychology! Now one can argue that the failure to pass
+                parameters correctly is due to laziness on behalf of the caller. At the end of the day, this is
+                indeed the case. However, I suspect that in many cases, it’s not because the caller was lazy, but
+                rather it’s because the caller thought they knew what the function parameter ordering is (or should
+                be). A classic example of this of course concerns dates. Being from the UK (or more relevantly –
+                Europe), I grew up thinking of dates as being day / month / year. Here in the USA, they of course
+                use the month / day / year format. Thus when designing a function that needs to be passed the day,
+                month and year, in what order should one declare the parameters? Well in my opinion it’s year,
+                month, day. That is the function should look like this:</p>
+<code class="language-c">
+void foo(year_t year, month_t month, day_t day)
+</code>
+            <p>There are several things to note:</p>
+            <ol>
+                <li>By putting the year first, one causes both Europeans and Americans to think twice. This is
+                    where the psychology comes in!</li>
+                <li>I’ve made the year signed – because it can indeed be negative, whereas the month and day
+                    cannot.</li>
+                <li>I’ve made the month a MONTH data type, thus considerably increasing the likelihood that an
+                    attempt to pass a day when a month is required will be flagged by the compiler.</li>
+
+                <li>I’ve made the day yet another data type (that maps well on to its expected range).
+                    Furthermore, attempts to pass most year values to this parameter will result in a
+                    compilation warning.</li>
+            </ol>
+            <p>Thus I’ve used a combination of psychology and good coding practice to achieve a more robust
+                function interface.
+                Thus the bottom line when it comes to designing function interfaces:</p>
+            <ol>
+                <li>Use strongly typed parameters.</li>
+                <li>Use const where you can.</li>
+                <li>Don’t assume that what is ‘natural’ to you is ‘natural’ to everyone.</li>
+                <li>Do indeed use descriptive parameter names – but don’t assume that everyone will understand
+                    them.</li>
+                <li>Apply some pop psychology if necessary.</li>
+            </ol>
+            <p>I hope you find this useful.</p>
+        </section>
+        <!-- Structure Comparison -->
+        <section class="main-section" id="Structure_comparison">
+            <header class="main-header">Structure Comparison</header>
+            <p>This topic concerns how best to compare two structures (naturally of the same type) for equality.
+                The conventional wisdom is that the only safe way to do this is by explicit member by member
+                comparison, and that one should avoid doing a straight bit (actually byte) comparison using
+                memcmp() because of the problem of padding bytes.</p>
+            <p>To see why this argument is advanced, one must understand that a compiler is free to place pad bytes
+                between members of a structure so as produce more favorable alignment of the data in memory.
+                Furthermore, the compiler is not obligated to initialize these pad bytes to any particular value.
+                This code fragment illustrates the problem:</p>
+<code class="language-c">
+typedef struct {
+    uint8_t x;
+    uint8_t pad1;   /* compiler added padding */
+    uint8_t y;
+    uint8_t pad2;   /* compiler added padding */
+} coord_t;
+
+void foo(void)
+{
+    coord_t p1 p2;
+
+    p1.x = p2.x = 3;
+    p1.y = p2.y = 4;
+
+    /* note pad bytes are not initialized */
+    if (memcmp(&p1, &p2, sizeof(p1)) != 0) {
+        /* we may get here */
+    }
+    ...
+}
+</code>
+            <p>Thus, it’s clear that to avoid these kinds of problems, we must do a member by member comparison.
+                However, before you rush off and start writing these member by member comparison functions, you
+                need to be aware of a gigantic weakness with this approach. To see what I mean, consider the
+                comparison function for my coord_t structure. A reasonable implementation might look like this:</p>
+<code class="language-c">
+bool are_equal(coord_t *p1, coord_t *p2)
+{
+    return ((p1->x == p2->x) && (p1->y == p2->y));
+}
+
+void foo(void)
+{
+    coord_t p1 p2;
+    p1.x = p2.x = 3;
+    p1.y = p2.y = 4;
+    if (!are_equal(&p1, &p2)) {
+        /* we should never get here */
+    }
+    ...
+}
+</code>
+            <p>Now consider what happens if I add a third member z to the coord_t structure. My structure
+                definition and function foo() become:</p>
+<code class="language-c">
+typedef struct {
+    uint8_t x;
+    uint8_t pad1;   /* compiler added padding */
+    uint8_t y;
+    uint8_t pad2;   /* compiler added padding */
+    uint8_t z;
+    uint8_t pad3;   /* compiler added padding */
+} coord_t;
+
+void foo(void)
+{
+    coord_t p1 p2;
+    p1.x = p2.x = 3;
+    p1.y = p2.y = 4;
+    p1.z = 6;
+    p2.z = 5;
+    if (!are_equal(&p1, &p2){
+        /* we will not get here */
+    }
+    ...
+}
+</code>
+            <p>The problem is that I now have to remember to also update the comparison function. Now clearly in a
+                simple case like this, it isn’t a big deal. However, in the real world where you might have a 500
+                line file, with the comparison function buried miles away from the structure declaration, it is way
+                too easy to forget to update the comparison function. The compiler is of no help. Furthermore it’s
+                my experience that all too often these sorts of problems can exist for a long time before they are
+                caught. Thus the bottom line, is that member by member comparison has its own set of problems.</p>
+            <p>So what do I suggest? Well, I think the following is a reasonable approach:</p>
+            <ol>
+                <li>If there is no way that your structure can change (presumably because of outside constraints
+                    such as hardware), then use a member by member comparison.</li>
+                <li>If you are working on a system where structure members are aligned on byte boundaries (which
+                    is true to the best of my knowledge for all 8 bit processors, and also most 16 bit
+                    processors), then use memcmp(). However, you need to think about doing this very carefully
+                    if there is the possibility of the code being ported to a platform where alignment is not
+                    on an 8 bit boundary.</li>
+                <li>If you are working on a system that aligns on a non 8 bit boundary, then you must either use
+                    member by member comparison, or take steps to ensure that all the bytes of a structure are
+                    initialized using memset() before you start assigning values to the actual members. If you
+                    do this, then you can probably use memcmp() with a reasonable amount of confidence.</li>
+                <li>If speed is a priority, then clearly memcmp() is the way to go. Just make sure you aren’t
+                    going to fall into a pothole as you blaze down the road.</li>
+            </ol>
+            <p>Before I leave this topic, I should mention a few esoteric things for you to consider.</p>
+            <p>If you use the memcmp() approach you are checking for bit equality rather than value equality. Now
+                most of the time they are the same. Sometimes however, they are not. To illustrate this, consider a
+                structure that contains a parameter that is a boolean. If in one structure the parameter has a
+                value of 1, and in the other structure it has a value of 2, then clearly they differ at the bit
+                level, but are essentially the same at a value level. What should you do in this case? Well clearly
+                it’s implementation dependent. It does however illustrate the perils of structure comparison.</p>
+            <p>Finally I should mention issues associated with structures that contain pointers. CS guys like to
+                distinguish between deep and shallow structure comparison. I rarely write code where a deep
+                comparison is required, and so for me it’s mostly a non-issue.</p>
+        </section>
+        <!-- Use #warning -->
+        <section class="main-section" id="Use_warning">
+            <header class="main-header">Use warning</header>
+            <p>Way back in 1999 I wrote an article for Embedded Systems Programming concerning the #error
+                directive. If you aren’t particularly familiar with #error, then I suggest you read the
+                article.
+                While the #error directive has remained one of my most popular tools, I have become an equally
+                big
+                fan of #warning.</p>
+            <p>Before I delve into the uses of #warning, I must warn you (if you would pardon the pun) that
+                #warning is a non standard directive. However it is supported by IAR, GCC, Microchip’s C18
+                compiler, Hi-Tech and probably a whole raft of other vendors. In other words, it’s pretty
+                standard
+                for a non-standard feature.</p>
+            <p>The use of #warning is simple enough:</p>
+<code class="language-c">
+#warning "This is a warning"
+</code>
+            <p>This will result in the compiler issuing a warning with the text ‘This is a warning’ printed to
+                stderr. Please note that, just as for #error, there is <em>no</em> requirement that the text be
+                in
+                quotes. If you insist on putting quotes around the text, then they will be printed to stderr as
+                well.</p>
+            <p>With the syntax out of the way, here’s some of the ways that I use #warning.</p>
+            <h2>Protecting Incomplete Code</h2>
+            <p>Very often when I’m coding, I like to get the big picture in place without worrying about the
+                minutiae of the implementation details. As a result I end up with functions or loop bodies that
+                are
+                incomplete. In these cases I simply add a #warning to alert me to the issue. For example</p>
+<code class="language-c">
+void foo(void)
+{
+    #warning "to be completed"
+}
+</code>
+            <p>Thus what happens now is that whenever I compile the module, I get a warning (i.e. reminder)
+                that
+                there is something important still to be done.</p>
+            <h2>Commenting Out Code</h2>
+            <p>I <em>never</em> comment code out anymore as part of the debugging process, as it is simply too
+                easy
+                to forget that the code has been removed. Instead I use this construct:</p>
+<code class="language-c">
+void foo(void)
+{
+    #if 0
+        /* code to be temporarily removed is here */
+    #else
+        #warning "temporary debug construct, fix me!"
+        /* experimental code goes here */
+    #endif
+}
+</code>
+            <p>In this case whenever I compile the module, I get a warning (i.e. reminder) that I have some
+                experimental code in the image.</p>
+            <h2>The Key Final Step</h2>
+            <p>While the above are useful constructs, the real power of #warning comes if you configure your
+                compiler to treat warnings as errors for the release build. If you do this and you have
+                inadvertently left incomplete or debug code in the image, then your compilation will fail. In
+                short, this technique will guarantee that you never release code that includes / excludes code
+                that
+                shouldn’t / should be there. That’s effective C.</p>
+        </section>
+        <section class="main-section" id="Reference">
+            <header class="main-header">Reference</header>
+            <p>All the documentation in this page is taken from Nigel Jones's <a href="https://embeddedgurus.com/stack-overflow/" target="-blank" class="main-link">blog</a>
+                on <a href="https://embeddedgurus.com/" target="_blank" class="main-link">Embedded Gurus</a> page.</p>
+            <ul>
+                <li><a href="https://embeddedgurus.com/stack-overflow/2009/02/effective-c-tips-1-using-vsprintf/"
+                        target="_blank" class="main-link">Effective C Tip #1 – Using vsprintf()</a></li>
+                <li><a href="https://embeddedgurus.com/stack-overflow/2009/02/effective-c-tips-2-defining-buffer-sizes/"
+                        target="_blank" class="main-link">Effective C Tip #2 – Defining buffer sizes</a></li>
+                <li><a href="https://embeddedgurus.com/stack-overflow/2009/04/effective-c-tip-3-exiting-an-intentional-trap/"
+                        target="_blank" class="main-link">Effective C Tip #3 – Exiting an intentional trap</a></li>
+                <li><a href="https://embeddedgurus.com/stack-overflow/2009/07/effective-c-tip-4-prototyping-static-functions/"
+                        target="_blank" class="main-link">Effective C Tip #4 – Prototyping static functions</a></li>
+                <li><a href="https://embeddedgurus.com/stack-overflow/2009/08/effective-c-tip-5-use-pre-masking-rather-than-post-masking/"
+                        target="_blank" class="main-link">Effective C Tip #5 – Use pre-masking rather than post-masking</a></li>
+                <li><a href="https://embeddedgurus.com/stack-overflow/2009/10/effective-c-tip-6-creating-a-flags-variable/"
+                        target="_blank" class="main-link">Effective C Tip #6 – Creating a flags variable</a></li>
+                <li><a href="https://embeddedgurus.com/stack-overflow/2009/10/effective-c-tip-7-use-strongly-typed-function-parameters/"
+                        target="_blank" class="main-link">Effective C Tip #7 – Use strongly typed function parameters</a></li>
+                <li><a href="https://embeddedgurus.com/stack-overflow/2009/12/effective-c-tip-8-structure-comparison/"
+                        target="_blank" class="main-link">Effective C Tip #8 – Structure Comparison</a></li>
+                <li><a href="https://embeddedgurus.com/stack-overflow/2011/09/effective-c-tip-9-%E2%80%93-use-warning/"
+                        target="_blank" class="main-link">Effective C Tip #9 – Use #warning</a></li>
+            </ul>
+        </section>
+    </main>
+
+    <!-- FCC testable projects CDN -->
+    <script src="https://cdn.freecodecamp.org/testable-projects-fcc/v1/bundle.js"></script>
+</body>
+
+</html>
+
