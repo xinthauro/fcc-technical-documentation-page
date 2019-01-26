@@ -5,5 +5,6 @@ You can see the project page in [freeCodeCamp](https://learn.freecodecamp.org/re
 also you can view it in [codepen](https://codepen.io/xinthauro/full/YRoMYz).
 
 ## Screenshots
-![Screenshot](screenshots/survey-form.jpg)
+![Screenshot](screenshots/technical_documentation_page_01.jpg)
+![Screenshot](screenshots/technical_documentation_page_02.jpg)
 
